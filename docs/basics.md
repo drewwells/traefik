@@ -90,7 +90,7 @@ Frontends can be defined using the following rules:
 You can use multiple values for a rule by separating them with `,`.
 You can use multiple rules by separating them by `;`.
 
-You can optionally enable `passHostHeader` to forward client `Host` header to the backend.
+You can optionally enable `passHostHeader` to forward client `Host` header to the backend. You can also optionally enable `passTLSCert` to forward TLS Client certificates to the backend.
 
 In order to use path regular expressions, you must declare an arbitrarily named variable followed by the colon-separated regular expression, all enclosed in curly braces. Any pattern supported by [Go's regexp package](https://golang.org/pkg/regexp/) may be used. Example: `/posts/{id:[0-9]+}`.
 
@@ -107,6 +107,7 @@ Here is an example of frontends definition:
   [frontends.frontend2]
   backend = "backend1"
   passHostHeader = true
+  passTLSCert = true
   priority = 10
   entrypoints = ["https"] # overrides defaultEntryPoints
     [frontends.frontend2.routes.test_1]
@@ -240,16 +241,22 @@ For example:
       sticky = true
 ```
 
-Healthcheck URL can be configured with a relative URL for `healthcheck.URL`.
-Interval between healthcheck can be configured by using `healthcheck.interval`
-(default: 30s)
+A health check can be configured in order to remove a backend from LB rotation
+as long as it keeps returning HTTP status codes other than 200 OK to HTTP GET
+requests periodically carried out by Traefik. The check is defined by a path
+appended to the backend URL and an interval (given in a format understood by [time.ParseDuration](https://golang.org/pkg/time/#ParseDuration)) specifying how
+often the health check should be executed (the default being 30 seconds). Each
+backend must respond to the health check within 5 seconds.
+
+A recovering backend returning 200 OK responses again is being returned to the
+LB rotation pool.
 
 For example:
 ```toml
 [backends]
   [backends.backend1]
     [backends.backend1.healthcheck]
-      URL = "/health"
+      path = "/health"
       interval = "10s"
 ```
 
@@ -288,17 +295,17 @@ Here is an example of backends and servers definition:
 
 # Configuration
 
-Træfɪk's configuration has two parts: 
+Træfɪk's configuration has two parts:
 
-- The [static Træfɪk configuration](/basics#static-trfk-configuration) which is loaded only at the beginning. 
+- The [static Træfɪk configuration](/basics#static-trfk-configuration) which is loaded only at the beginning.
 - The [dynamic Træfɪk configuration](/basics#dynamic-trfk-configuration) which can be hot-reloaded (no need to restart the process).
 
 
 ## Static Træfɪk configuration
 
-The static configuration is the global configuration which is setting up connections to configuration backends and entrypoints. 
+The static configuration is the global configuration which is setting up connections to configuration backends and entrypoints.
 
-Træfɪk can be configured using many configuration sources with the following precedence order. 
+Træfɪk can be configured using many configuration sources with the following precedence order.
 Each item takes precedence over the item below it:
 
 - [Key-value Store](/basics/#key-value-stores)
@@ -340,18 +347,18 @@ Træfɪk supports several Key-value stores:
 
 - [Consul](https://consul.io)
 - [etcd](https://coreos.com/etcd/)
-- [ZooKeeper](https://zookeeper.apache.org/) 
+- [ZooKeeper](https://zookeeper.apache.org/)
 - [boltdb](https://github.com/boltdb/bolt)
 
 Please refer to the [User Guide Key-value store configuration](/user-guide/kv-config/) section to get documentation on it.
 
 ## Dynamic Træfɪk configuration
 
-The dynamic configuration concerns : 
+The dynamic configuration concerns :
 
 - [Frontends](/basics/#frontends)
-- [Backends](/basics/#backends) 
-- [Servers](/basics/#servers) 
+- [Backends](/basics/#backends)
+- [Servers](/basics/#servers)
 
 Træfɪk can hot-reload those rules which could be provided by [multiple configuration backends](/toml/#configuration-backends).
 
@@ -369,7 +376,7 @@ List of Træfɪk available commands with description :            �
 - `version` : Print version 
 - `storeconfig` : Store the static traefik configuration into a Key-value stores. Please refer to the [Store Træfɪk configuration](/user-guide/kv-config/#store-trfk-configuration) section to get documentation on it.
 
-Each command may have related flags. 
+Each command may have related flags.
 All those related flags will be displayed with :
 
 ```bash
@@ -381,4 +388,3 @@ Note that each command is described at the beginning of the help section:
 ```bash
 $ traefik --help
 ```
-

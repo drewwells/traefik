@@ -418,6 +418,35 @@ func (server *Server) listenSignals() {
 	server.Stop()
 }
 
+func createClientTLSConfig(tlsOption *TLS) (*tls.Config, error) {
+	if tlsOption == nil {
+		return nil, errors.New("no TLS provided")
+	}
+
+	config, err := tlsOption.Certificates.CreateTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(tlsOption.ClientCAFiles) > 0 {
+		pool := x509.NewCertPool()
+		for _, caFile := range tlsOption.ClientCAFiles {
+			data, err := ioutil.ReadFile(caFile)
+			if err != nil {
+				return nil, err
+			}
+			ok := pool.AppendCertsFromPEM(data)
+			if !ok {
+				return nil, errors.New("invalid certificate(s) in " + caFile)
+			}
+		}
+		config.RootCAs = pool
+		//config.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	config.BuildNameToCertificate()
+	return config, nil
+}
+
 // creates a TLS config that allows terminating HTTPS for multiple domains using SNI
 func (server *Server) createTLSConfig(entryPointName string, tlsOption *TLS, router *middlewares.HandlerSwitcher) (*tls.Config, error) {
 	if tlsOption == nil {
@@ -500,6 +529,7 @@ func (server *Server) createTLSConfig(entryPointName string, tlsOption *TLS, rou
 			}
 		}
 	}
+
 	return config, nil
 }
 
@@ -549,6 +579,17 @@ func (server *Server) buildEntryPoints(globalConfiguration GlobalConfiguration) 
 	return serverEntryPoints
 }
 
+// clientTLSRoundTripper is used for forwarding client authentication to
+// backend server
+func clientTLSRoundTripper(config *tls.Config) http.RoundTripper {
+	if config == nil {
+		return http.DefaultTransport
+	}
+	return &http.Transport{
+		TLSClientConfig: config,
+	}
+}
+
 // LoadConfig returns a new gorilla.mux Route from the specified global configuration and the dynamic
 // provider configurations.
 func (server *Server) loadConfig(configurations configs, globalConfiguration GlobalConfiguration) (map[string]*serverEntryPoint, error) {
@@ -568,13 +609,6 @@ func (server *Server) loadConfig(configurations configs, globalConfiguration Glo
 
 			log.Debugf("Creating frontend %s", frontendName)
 
-			fwd, err := forward.New(forward.Logger(oxyLogger), forward.PassHostHeader(frontend.PassHostHeader))
-			if err != nil {
-				log.Errorf("Error creating forwarder for frontend %s: %v", frontendName, err)
-				log.Errorf("Skipping frontend %s...", frontendName)
-				continue frontend
-			}
-			saveBackend := middlewares.NewSaveBackend(fwd)
 			if len(frontend.EntryPoints) == 0 {
 				log.Errorf("No entrypoint defined for frontend %s, defaultEntryPoints:%s", frontendName, globalConfiguration.DefaultEntryPoints)
 				log.Errorf("Skipping frontend %s...", frontendName)
@@ -612,7 +646,30 @@ func (server *Server) loadConfig(configurations configs, globalConfiguration Glo
 				} else {
 					if backends[frontend.Backend] == nil {
 						log.Debugf("Creating backend %s", frontend.Backend)
-						var lb http.Handler
+						var (
+							tlsConfig *tls.Config
+							err       error
+							lb        http.Handler
+						)
+
+						if frontend.PassTLSCert {
+							tlsConfig, err = createClientTLSConfig(entryPoint.TLS)
+							if err != nil {
+								log.Errorf("failed to create TLS config %s: %v", frontendName, err)
+								continue frontend
+							}
+						}
+
+						// passing nil will use the roundtripper http.DefaultTransport
+						rt := clientTLSRoundTripper(tlsConfig)
+
+						fwd, err := forward.New(forward.Logger(oxyLogger), forward.PassHostHeader(frontend.PassHostHeader), forward.RoundTripper(rt))
+						if err != nil {
+							log.Errorf("Error creating forwarder for frontend %s: %v", frontendName, err)
+							log.Errorf("Skipping frontend %s...", frontendName)
+							continue frontend
+						}
+						saveBackend := middlewares.NewSaveBackend(fwd)
 						rr, _ := roundrobin.New(saveBackend)
 						if configuration.Backends[frontend.Backend] == nil {
 							log.Errorf("Undefined backend '%s' for frontend %s", frontend.Backend, frontendName)
@@ -667,7 +724,7 @@ func (server *Server) loadConfig(configurations configs, globalConfiguration Glo
 											interval = time.Second * 30
 										}
 									}
-									backendsHealthcheck[frontend.Backend] = healthcheck.NewBackendHealthCheck(configuration.Backends[frontend.Backend].HealthCheck.URL, interval, rebalancer)
+									backendsHealthcheck[frontend.Backend] = healthcheck.NewBackendHealthCheck(configuration.Backends[frontend.Backend].HealthCheck.Path, interval, rebalancer)
 								}
 							}
 						case types.Wrr:
@@ -701,7 +758,7 @@ func (server *Server) loadConfig(configurations configs, globalConfiguration Glo
 										interval = time.Second * 30
 									}
 								}
-								backendsHealthcheck[frontend.Backend] = healthcheck.NewBackendHealthCheck(configuration.Backends[frontend.Backend].HealthCheck.URL, interval, rr)
+								backendsHealthcheck[frontend.Backend] = healthcheck.NewBackendHealthCheck(configuration.Backends[frontend.Backend].HealthCheck.Path, interval, rr)
 							}
 						}
 						maxConns := configuration.Backends[frontend.Backend].MaxConn

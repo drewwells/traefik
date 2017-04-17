@@ -39,7 +39,7 @@ type CircuitBreaker struct {
 
 // HealthCheck holds HealthCheck configuration
 type HealthCheck struct {
-	URL      string `json:"url,omitempty"`
+	Path     string `json:"path,omitempty"`
 	Interval string `json:"interval,omitempty"`
 }
 
@@ -60,6 +60,7 @@ type Frontend struct {
 	Backend        string           `json:"backend,omitempty"`
 	Routes         map[string]Route `json:"routes,omitempty"`
 	PassHostHeader bool             `json:"passHostHeader,omitempty"`
+	PassTLSCert    bool             `json:"passTLSCert,omitempty"`
 	Priority       int              `json:"priority"`
 }
 
